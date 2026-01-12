@@ -137,6 +137,7 @@ jobs:
         with:
           artifacts: "assets/*/*/*.zip"
           generateReleaseNotes: false
+          replacesArtifacts: true
           token: ${{ secrets.REPO_PAT }}
 
   release-docker:
