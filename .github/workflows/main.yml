@@ -80,7 +80,6 @@ jobs:
           git tag ${{ github.ref_name }}
           git log -1 --oneline
 
-      
       - name: Build with tag
         if: contains(github.ref, 'refs/tags/')
         uses: goreleaser/goreleaser-action@v6
@@ -140,86 +139,79 @@ jobs:
           generateReleaseNotes: false
           token: ${{ secrets.REPO_PAT }}
 
-     # - name: Purge jsdelivr cache
-     #   run: |
-     #     curl -s https://purge.jsdelivr.net/gh/${{ github.repository_owner }}/nezha@master/script/install.sh
-     #     curl -s https://purge.jsdelivr.net/gh/${{ github.repository_owner }}/nezha@master/script/nezha-agent.service
-     #     curl -s https://purge.jsdelivr.net/gh/${{ github.repository_owner }}/nezha@master/script/docker-compose.yaml
-     #     curl -s https://purge.jsdelivr.net/gh/${{ github.repository_owner }}/nezha@master/script/config.yaml
+  release-docker:
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push'
+    name: Release Docker images
 
-release-docker:
-  runs-on: ubuntu-latest
-  needs: build
-  if: github.event_name == 'push'
-  name: Release Docker images
+    steps:
+      - name: Checkout private repo (PAT, main)
+        run: |
+          git clone \
+            --branch main \
+            --single-branch \
+            https://${{ secrets.PRIVATE_REPO_TOKEN }}@${{ secrets.PRIVATE_REPO_URL }} .
 
-  steps:
-    - name: Checkout private repo (PAT, main)
-      run: |
-        git clone \
-          --branch main \
-          --single-branch \
-          https://${{ secrets.PRIVATE_REPO_TOKEN }}@${{ secrets.PRIVATE_REPO_URL }} .
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./assets
 
-    - name: Download artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: ./assets
+      - name: Fix permissions
+        run: |
+          chmod -R +x ./assets/*
+          mkdir -p dist
+          mv ./assets/*/*/* ./dist
 
-    - name: Fix permissions
-      run: |
-        chmod -R +x ./assets/*
-        mkdir -p dist
-        mv ./assets/*/*/* ./dist
+      - name: Extract branch name
+        id: extract_branch
+        run: |
+          if [[ $GITHUB_REF == refs/heads/* ]]; then
+            TAG_NAME="${GITHUB_REF#refs/heads/}"
+          else
+            TAG_NAME="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
 
-    - name: Extract branch name
-      id: extract_branch
-      run: |
-        if [[ $GITHUB_REF == refs/heads/* ]]; then
-          TAG_NAME="${GITHUB_REF#refs/heads/}"
-        else
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
-        fi
-        echo "tag=$TAG_NAME" >> $GITHUB_OUTPUT
+      - name: Log into GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ github.token }}
 
-    - name: Log into GHCR
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ github.token }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
 
-    - name: Set up QEMU
-      uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Set image names
+        id: image-name
+        run: |
+          GHCR_IMAGE_NAME=$(echo "ghcr.io/${{ github.repository_owner }}/nezha" | tr '[:upper:]' '[:lower:]')
+          echo "GHCR_IMAGE_NAME=$GHCR_IMAGE_NAME" >> $GITHUB_OUTPUT
 
-    - name: Set image names
-      id: image-name
-      run: |
-        GHCR_IMAGE_NAME=$(echo "ghcr.io/${{ github.repository_owner }}/nezha" | tr '[:upper:]' '[:lower:]')
-        echo "GHCR_IMAGE_NAME=$GHCR_IMAGE_NAME" >> $GITHUB_OUTPUT
+      - name: Build & Push Docker image (tag)
+        if: contains(github.ref, 'refs/tags/')
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/s390x
+          push: true
+          tags: |
+            ${{ steps.image-name.outputs.GHCR_IMAGE_NAME }}:latest
+            ${{ steps.image-name.outputs.GHCR_IMAGE_NAME }}:${{ steps.extract_branch.outputs.tag }}
 
-    - name: Build & Push Docker image (tag)
-      if: contains(github.ref, 'refs/tags/')
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: ./Dockerfile
-        platforms: linux/amd64,linux/arm64,linux/s390x
-        push: true
-        tags: |
-          ${{ steps.image-name.outputs.GHCR_IMAGE_NAME }}:latest
-          ${{ steps.image-name.outputs.GHCR_IMAGE_NAME }}:${{ steps.extract_branch.outputs.tag }}
-
-    - name: Build & Push Docker image (snapshot)
-      if: contains(github.ref, 'refs/tags/') == false
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        file: ./Dockerfile
-        platforms: linux/amd64,linux/arm64,linux/s390x
-        push: true
-        tags: |
-          ${{ steps.image-name.outputs.GHCR_IMAGE_NAME }}:${{ steps.extract_branch.outputs.tag }}
+      - name: Build & Push Docker image (snapshot)
+        if: contains(github.ref, 'refs/tags/') == false
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/s390x
+          push: true
+          tags: |
+            ${{ steps.image-name.outputs.GHCR_IMAGE_NAME }}:${{ steps.extract_branch.outputs.tag }}
