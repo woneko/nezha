@@ -133,12 +133,11 @@ jobs:
           done
 
       - name: Release
-        uses: ncipollo/release-action@v1
+        uses: softprops/action-gh-release@v2
         with:
-          artifacts: "assets/*/*/*.zip"
-          generateReleaseNotes: false
-          replacesArtifacts: true
-          token: ${{ secrets.REPO_PAT }}
+          files: "assets/*/*/*.zip"
+          generate_release_notes: false
+          GITHUB_TOKEN: ${{ secrets.REPO_PAT }}
 
   release-docker:
     runs-on: ubuntu-latest
